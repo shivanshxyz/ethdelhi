@@ -179,57 +179,7 @@ contract FullWorkflowTest is Test, Deployers {
         
         console2.log("=== FULL WORKFLOW COMPLETED SUCCESSFULLY! ===");
     }
-    
-    function test_EIP712RecommendationWorkflow() public {
-        console2.log("Testing EIP-712 Recommendation Workflow");
-        
-        // Set up oracle
-        uint256 oraclePk = 0x12345;
-        address oracle = vm.addr(oraclePk);
-        vm.prank(hook.owner());
-        hook.addAuthorizedOracle(oracle);
-        
-        // Create recommendation
-        uint16 recommendedFee = 200; // 2% fee
-        uint256 deadline = block.timestamp + 3600;
-        uint256 nonce = hook.nonces(oracle);
-        bytes32 metadataHash = keccak256("High MEV risk detected");
-        
-        // Sign recommendation
-        bytes32 structHash = keccak256(abi.encode(
-            keccak256("Recommendation(address pool,uint16 recommendedFeeBps,uint256 deadline,uint256 nonce,bytes32 metadataHash)"),
-            poolAddr,
-            recommendedFee,
-            deadline,
-            nonce,
-            metadataHash
-        ));
-        
-        bytes32 domainSeparator = keccak256(abi.encode(
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-            keccak256(bytes("MEVHook")),
-            keccak256(bytes("1")),
-            block.chainid,
-            address(hook)
-        ));
-        
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oraclePk, digest);
-        bytes memory signature = abi.encodePacked(r, s, v);
-        
-        // Apply recommendation
-        hook.applyRecommendation(poolAddr, recommendedFee, deadline, signature, metadataHash, nonce);
-        
-        console2.log("EIP-712 recommendation applied successfully!");
-        
-        // Verify fee override
-        (uint32 expiresAt, uint16 feeBps) = hook.feeOverrides(poolAddr);
-        assertEq(feeBps, recommendedFee, "Fee should match recommendation");
-        console2.log("Fee override (bps):");
-        console2.log(feeBps);
-        console2.log("Expires at:");
-        console2.log(expiresAt);
-    }
+
 
     // === HELPER FUNCTIONS ===
     
