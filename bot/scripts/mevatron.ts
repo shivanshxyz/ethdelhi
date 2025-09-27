@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api'
-import Database from 'sqlite3'
+import Database, { Database as DatabaseType } from 'better-sqlite3'
 import { BlockchainMonitor, ContractQueries } from './monitoring'
 import { formatEther, isAddress, parseEther } from 'viem'
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts'
@@ -20,13 +20,13 @@ interface User {
 
 export class MEVAlertBot {
   private bot: TelegramBot
-  private db: Database.Database
+  private db: DatabaseType
   private monitor: BlockchainMonitor
   private queries: ContractQueries
   
   constructor(botToken: string) {
     this.bot = new TelegramBot(botToken, { polling: true })
-    this.db = new Database.Database('./bot.db')
+    this.db = new Database('./bot.db')
     this.monitor = new BlockchainMonitor()
     this.queries = new ContractQueries()
     
@@ -35,26 +35,24 @@ export class MEVAlertBot {
   }
   
   private setupDatabase() {
-    this.db.serialize(() => {
-      this.db.run(`CREATE TABLE IF NOT EXISTS users (
-        telegram_id TEXT PRIMARY KEY,
-        wallet_address TEXT,
-        encrypted_key TEXT,
-        watched_pools TEXT DEFAULT '[]',
-        settings TEXT DEFAULT '{"mevAlerts":true,"auctionUpdates":true,"winnerNotifications":true}'
-      )`)
-      
-      this.db.run(`CREATE TABLE IF NOT EXISTS bids (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegram_id TEXT,
-        pool TEXT,
-        auction_id INTEGER,
-        bid_amount TEXT,
-        tx_hash TEXT,
-        status TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`)
-    })
+    this.db.exec(`CREATE TABLE IF NOT EXISTS users (
+      telegram_id TEXT PRIMARY KEY,
+      wallet_address TEXT,
+      encrypted_key TEXT,
+      watched_pools TEXT DEFAULT '[]',
+      settings TEXT DEFAULT '{"mevAlerts":true,"auctionUpdates":true,"winnerNotifications":true}'
+    )`)
+    
+    this.db.exec(`CREATE TABLE IF NOT EXISTS bids (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      telegram_id TEXT,
+      pool TEXT,
+      auction_id INTEGER,
+      bid_amount TEXT,
+      tx_hash TEXT,
+      status TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`)
   }
 
   private setupHandlers() {
@@ -267,63 +265,53 @@ export class MEVAlertBot {
   }
 
   private async getUser(telegramId: string): Promise<User | null> {
-    return new Promise((resolve, reject) => {
-      this.db.get('SELECT * FROM users WHERE telegram_id = ?', [telegramId], (err, row: any) => {
-        if (err) {
-          return reject(err)
-        }
-        if (!row) {
-          return resolve(null)
-        }
-        resolve({
-          telegramId: row.telegram_id,
-          walletAddress: row.wallet_address,
-          privateKey: row.encrypted_key,
-          watchedPools: JSON.parse(row.watched_pools),
-          notificationSettings: JSON.parse(row.settings)
-        })
-      })
-    })
+    const stmt = this.db.prepare('SELECT * FROM users WHERE telegram_id = ?')
+    const row = stmt.get(telegramId) as any
+    
+    if (!row) {
+      return null
+    }
+    
+    return {
+      telegramId: row.telegram_id,
+      walletAddress: row.wallet_address,
+      privateKey: row.encrypted_key,
+      watchedPools: JSON.parse(row.watched_pools),
+      notificationSettings: JSON.parse(row.settings)
+    }
   }
 
   private async saveUser(user: User): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'INSERT OR REPLACE INTO users (telegram_id, wallet_address, encrypted_key, watched_pools, settings) VALUES (?, ?, ?, ?, ?)',
-        [
-          user.telegramId,
-          user.walletAddress,
-          user.privateKey,
-          JSON.stringify(user.watchedPools),
-          JSON.stringify(user.notificationSettings)
-        ],
-        (err) => {
-          if (err) {
-            return reject(err)
-          }
-          resolve()
-        }
-      )
-    })
+    const stmt = this.db.prepare(
+      'INSERT OR REPLACE INTO users (telegram_id, wallet_address, encrypted_key, watched_pools, settings) VALUES (?, ?, ?, ?, ?)'
+    )
+    
+    stmt.run(
+      user.telegramId,
+      user.walletAddress,
+      user.privateKey,
+      JSON.stringify(user.watchedPools),
+      JSON.stringify(user.notificationSettings)
+    )
   }
 }
 
-async function main() {
-    const bot = new MEVAlertBot(process.env.TELEGRAM_BOT_TOKEN!)
+// async function main() {
+//     const bot = new MEVAlertBot(process.env.TELEGRAM_BOT_TOKEN!)
     
-    console.log('🤖 MEV Alert Bot starting...')
+//     console.log('🤖 MEV Alert Bot starting...')
     
-    // Start blockchain monitoring
-    await bot.startMonitoring()
+//     // Start blockchain monitoring
+//     await bot.startMonitoring()
     
-    console.log('✅ Bot is ready and monitoring for MEV activity!')
+//     console.log('✅ Bot is ready and monitoring for MEV activity!')
     
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      console.log('🛑 Shutting down bot...')
-      await bot.stop()
-      process.exit(0)
-    })
-  }
+//     // Graceful shutdown
+//     process.on('SIGINT', async () => {
+//       console.log('🛑 Shutting down bot...')
+//       await bot.stop()
+//       process.exit(0)
+//     })
+//   }
   
-  main().catch(console.error)
+//   main().catch(console.error)

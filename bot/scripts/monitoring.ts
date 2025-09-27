@@ -140,7 +140,7 @@ const publicClient = createPublicClient({
 
 // For sending transactions (bidding)
 const walletClient = createWalletClient({
-    account: privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`),
+    account: privateKeyToAccount(process.env.ALICE_PRIVATE_KEY as `0x${string}`),
   chain: foundry,
   transport: http('http://127.0.0.1:8545')
 })
