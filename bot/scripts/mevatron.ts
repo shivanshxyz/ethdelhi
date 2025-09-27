@@ -32,6 +32,7 @@ export class MEVAlertBot {
     
     this.setupDatabase()
     this.setupHandlers()
+    this.monitor.handleMEVAlert = this.sendMEVAlert.bind(this)
   }
   
   private setupDatabase() {
@@ -256,6 +257,44 @@ export class MEVAlertBot {
     }
   }
 
+  private async sendMEVAlert(params: {
+    pool: string,
+    mevScore: bigint,
+    timestamp: bigint,
+    blockNumber: bigint | number | undefined,
+    txHash: string | undefined
+  }) {
+    console.log(`Broadcasting MEV alert for pool ${params.pool}`);
+
+    const stmt = this.db.prepare('SELECT telegram_id, watched_pools, settings FROM users');
+    const users = stmt.all() as { telegram_id: string, watched_pools: string, settings: string }[];
+
+    const alertMessage = `
+🚨 **MEV Alert!**
+
+A high MEV score has been detected, indicating a potential MEV opportunity or attack.
+
+🏊 **Pool:** \`${params.pool}\`
+📈 **MEV Score:** ${params.mevScore.toString()}
+🔗 **Transaction:** \`${params.txHash}\`
+
+An auction may start shortly. Use /auctions to check.
+    `;
+
+    for (const user of users) {
+        try {
+            const watchedPools = JSON.parse(user.watched_pools) as string[];
+            const settings = JSON.parse(user.settings);
+
+            if (settings.mevAlerts && watchedPools.includes(params.pool)) {
+                await this.bot.sendMessage(user.telegram_id, alertMessage, { parse_mode: 'Markdown' });
+            }
+        } catch (error) {
+            console.error(`Failed to send alert to user ${user.telegram_id}`, error);
+        }
+    }
+  }
+
   async startMonitoring() {
     await this.monitor.startMonitoring()
   }
@@ -295,23 +334,3 @@ export class MEVAlertBot {
     )
   }
 }
-
-// async function main() {
-//     const bot = new MEVAlertBot(process.env.TELEGRAM_BOT_TOKEN!)
-    
-//     console.log('🤖 MEV Alert Bot starting...')
-    
-//     // Start blockchain monitoring
-//     await bot.startMonitoring()
-    
-//     console.log('✅ Bot is ready and monitoring for MEV activity!')
-    
-//     // Graceful shutdown
-//     process.on('SIGINT', async () => {
-//       console.log('🛑 Shutting down bot...')
-//       await bot.stop()
-//       process.exit(0)
-//     })
-//   }
-  
-//   main().catch(console.error)
