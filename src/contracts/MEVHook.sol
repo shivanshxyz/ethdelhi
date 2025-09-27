@@ -1,20 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// Minimal Ownable (to avoid external dependency during hackathon)
-abstract contract Ownable {
-    address private _owner;
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    constructor() { _transferOwnership(msg.sender); }
-    modifier onlyOwner() { require(owner() == msg.sender, "Ownable: caller is not the owner"); _; }
-    function owner() public view returns (address) { return _owner; }
-    function transferOwnership(address newOwner) public onlyOwner { require(newOwner != address(0), "Ownable: zero"); _transferOwnership(newOwner); }
-    function _transferOwnership(address newOwner) internal { address oldOwner = _owner; _owner = newOwner; emit OwnershipTransferred(oldOwner, newOwner); }
-}
-
 import {ECDSA} from "../../lib/openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 // Uniswap v4 Hook base and types
+import {Ownable} from "../../lib/openzeppelin/contracts/access/Ownable.sol";
 import {BaseHook} from "@openzeppelin/uniswap-hooks/src/base/BaseHook.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {IPoolManager, SwapParams} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -22,16 +12,12 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
-
-/// @title MEV-Alert Hook + Simple Auction + EIP-712 Recommendation Verifier
-/// @notice Hackathon-focused, minimal, and well-documented implementation.
-/// Emits rich events for indexers and a Telegram bot to consume.
 contract MEVHook is BaseHook, Ownable {
     using PoolIdLibrary for PoolKey;
     using ECDSA for bytes32;
 
     // -------------------------------------------------------------------------
-    // Events (must match spec EXACTLY)
+    // Events
     // -------------------------------------------------------------------------
     event SwapObserved(address indexed pool, address indexed trader, uint256 amountIn, uint256 amountOut, uint256 timestamp);
     event MEVAlert(address indexed pool, uint256 mevScore, uint256 timestamp, bytes32 metadataHash);
@@ -528,44 +514,6 @@ contract MEVHook is BaseHook, Ownable {
     }
 
     // -------------------------------------------------------------------------
-    // EIP-712: applyRecommendation
-    // -------------------------------------------------------------------------
-    function applyRecommendation(
-        address pool,
-        uint16 recommendedFeeBps,
-        uint256 deadline,
-        bytes calldata signature,
-        bytes32 metadataHash,
-        uint256 nonce
-    ) external {
-        require(block.timestamp <= deadline, "EXPIRED");
-        // reconstruct digest
-        bytes32 structHash = keccak256(
-            abi.encode(
-                RECOMMENDATION_TYPEHASH,
-                pool,
-                recommendedFeeBps,
-                deadline,
-                nonce,
-                metadataHash
-            )
-        );
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparatorV4(), structHash));
-        address signer = digest.recover(signature);
-        require(isAuthorizedOracle[signer], "BAD_SIGNER");
-        require(nonces[signer] == nonce, "BAD_NONCE");
-        nonces[signer] = nonce + 1;
-
-        // apply override
-        feeOverrides[pool] = FeeOverride({
-            expiresAt: uint32(block.timestamp + recommendationOverrideDuration),
-            feeBps: recommendedFeeBps
-        });
-
-        emit RecommendationApplied(pool, recommendedFeeBps, signer, metadataHash);
-    }
-
-    // -------------------------------------------------------------------------
     // Admin
     // -------------------------------------------------------------------------
     function setMEVThreshold(address pool, uint256 threshold) external onlyOwner {
@@ -601,7 +549,7 @@ contract MEVHook is BaseHook, Ownable {
 
     // New admin functions for time-weighted auctions
     function setMaxTimeBonusPercent(uint256 percent) external onlyOwner {
-        require(percent <= 100, "BONUS_TOO_HIGH"); // Max 100% bonus
+        require(percent <= 100, "BONUS_TOO_HIGH");
         maxTimeBonusPercent = percent;
     }
 
@@ -646,7 +594,7 @@ contract MEVHook is BaseHook, Ownable {
     }
 
     // -------------------------------------------------------------------------
-    // Heuristic: computeMEVScoreOnchain (demo stub)
+    // Heuristic: computeMEVScoreOnchain
     // -------------------------------------------------------------------------
     function computeMEVScoreOnchain(address pool, uint256 amountIn) public view returns (uint256) {
         if (amountIn < minLargeSwap) return 0;
