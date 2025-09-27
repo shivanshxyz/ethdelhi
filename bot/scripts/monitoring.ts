@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, parseAbiItem, parseEventLogs } from 'viem'
+import { createPublicClient, createWalletClient, http, parseAbiItem, parseEventLogs, formatEther } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { foundry } from 'viem/chains'
 import dotenv from 'dotenv'
@@ -118,6 +118,7 @@ const HOOK_ABI = [
       { name: 'pool', type: 'address' },
       { name: 'auctionId', type: 'uint256' }
     ],
+    outputs: [],
     stateMutability: 'payable'
   },
   {
@@ -128,6 +129,7 @@ const HOOK_ABI = [
       { name: 'minBidWei', type: 'uint256' },
       { name: 'durationSecs', type: 'uint32' }
     ],
+    outputs: [],
     stateMutability: 'nonpayable'
   }
 ] as const
@@ -169,22 +171,18 @@ class BlockchainMonitor {
       eventName: 'MEVAlert',
       onLogs: (logs) => {
         logs.forEach(async (log) => {
-          // Parse event args from log using viem's parseAbiItem
-          const event = parseEventLogs({
-            abi: [parseAbiItem('event MEVAlert(address indexed pool, uint256 mevScore, uint256 timestamp, bytes32 metadataHash)')],
-            logs: [log]
-          })
-          
-          const { pool, mevScore, timestamp } = event[0].args as { pool: string, mevScore: bigint, timestamp: bigint }
-          console.log(`🚨 MEV Alert: Pool ${pool}, Score ${mevScore}`)
-          
-          await this.handleMEVAlert({
-            pool: pool!,
-            mevScore: mevScore!,
-            timestamp: timestamp!,
-            blockNumber: log.blockNumber!,
-            txHash: log.transactionHash!
-          })
+          if (log.args) {
+            const { pool, mevScore, timestamp } = log.args;
+            console.log(`🚨 MEV Alert: Pool ${pool}, Score ${mevScore}`)
+            
+            await this.handleMEVAlert({
+              pool: pool!,
+              mevScore: mevScore!,
+              timestamp: timestamp!,
+              blockNumber: log.blockNumber!,
+              txHash: log.transactionHash!
+            });
+          }
         })
       }
     })
@@ -196,23 +194,20 @@ class BlockchainMonitor {
       eventName: 'AuctionStarted',
       onLogs: (logs) => {
         logs.forEach(async (log) => {
-            const event = parseEventLogs({
-            abi: [parseAbiItem('event AuctionStarted(address indexed pool, uint256 auctionId, uint256 minBid, uint256 startTime, uint256 endTime)')],
-            logs: [log]
-          })
-          
-          const { pool, auctionId, minBid, startTime, endTime } = event[0].args as { pool: string , auctionId: bigint, minBid: bigint, startTime: bigint, endTime: bigint}
-          console.log(`🏆 Auction Started: Pool ${pool}, ID ${auctionId}`)
-          
-          await this.handleAuctionStarted({
-            pool: pool!,
-            auctionId: auctionId!,
-            minBid: minBid!,
-            startTime: startTime!,
-            endTime: endTime!,
-            blockNumber: log.blockNumber!,
-            txHash: log.transactionHash!
-          })
+          if (log.args) {
+            const { pool, auctionId, minBid, startTime, endTime } = log.args;
+            console.log(`🏆 Auction Started: Pool ${pool}, ID ${auctionId}`)
+
+            await this.handleAuctionStarted({
+              pool: pool!,
+              auctionId: auctionId!,
+              minBid: minBid!,
+              startTime: startTime!,
+              endTime: endTime!,
+              blockNumber: log.blockNumber!,
+              txHash: log.transactionHash!
+            });
+          }
         })
       }
     })
@@ -224,21 +219,19 @@ class BlockchainMonitor {
       eventName: 'BidPlaced',
       onLogs: (logs) => {
         logs.forEach(async (log) => {
-            const event = parseEventLogs({
-            abi: [parseAbiItem('event BidPlaced(address indexed pool, uint256 auctionId, address bidder, uint256 bidAmount)')],
-            logs: [log]
-          })
-
-          const { pool, auctionId, bidder, bidAmount} = event[0].args as {pool: string, auctionId: bigint, bidder: string, bidAmount: bigint}
-          
-          await this.handleBidPlaced({
-            pool: pool!,
-            auctionId: auctionId!,
-            bidder: bidder!,
-            bidAmount: bidAmount!,
-            blockNumber: log.blockNumber!,
-            txHash: log.transactionHash!
-          })
+          if (log.args) {
+            const { pool, auctionId, bidder, bidAmount } = log.args;
+            console.log(`💸 Bid Placed: Pool ${pool}, ID ${auctionId}, Bidder ${bidder}, Amount ${formatEther(bidAmount!)} ETH`)
+            
+            await this.handleBidPlaced({
+              pool: pool!,
+              auctionId: auctionId!,
+              bidder: bidder!,
+              bidAmount: bidAmount!,
+              blockNumber: log.blockNumber!,
+              txHash: log.transactionHash!
+            });
+          }
         })
       }
     })
@@ -325,6 +318,33 @@ class ContractQueries {
       functionName: 'mevInsuranceFund', 
       args: [pool as `0x${string}`]
   }) as unknown as bigint
+  }
+
+  async placeBid(
+    privateKey: `0x${string}`,
+    pool: string,
+    auctionId: bigint,
+    bidAmount: bigint
+  ): Promise<`0x${string}`> {
+    const account = privateKeyToAccount(privateKey);
+    
+    const userWalletClient = createWalletClient({
+        account,
+        chain: foundry,
+        transport: http('http://127.0.0.1:8545')
+    });
+
+    const { request } = await publicClient.simulateContract({
+        account,
+        address: HOOK_ADDRESS,
+        abi: HOOK_ABI,
+        functionName: 'placeBid',
+        args: [pool as `0x${string}`, auctionId],
+        value: bidAmount,
+    });
+
+    const txHash = await userWalletClient.writeContract(request);
+    return txHash;
   }
   
   // Get active auctions for a pool

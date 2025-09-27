@@ -176,10 +176,10 @@ export class MEVAlertBot {
           const keyboard = {
             inline_keyboard: [
               [
-                { text: '💰 Bid 0.1 ETH', callback_data: `quick_bid_${auction.pool}_${auction.auctionId}_0.1` },
-                { text: '💰 Bid 0.5 ETH', callback_data: `quick_bid_${auction.pool}_${auction.auctionId}_0.5` }
+                { text: '💰 Bid 0.1 ETH', callback_data: `quick_bid:${auction.pool}:${auction.auctionId}:0.1` },
+                { text: '💰 Bid 0.5 ETH', callback_data: `quick_bid:${auction.pool}:${auction.auctionId}:0.5` }
               ],
-              [{ text: '📊 Details', callback_data: `auction_details_${auction.pool}_${auction.auctionId}` }]
+              [{ text: '📊 Details', callback_data: `auction_details:${auction.pool}:${auction.auctionId}` }]
             ]
           }
           
@@ -195,11 +195,87 @@ export class MEVAlertBot {
     })
     
     // Place bid
-    this.bot.onText(/\/bid (.+) (\d+) ([\d.]+)/, async (msg, match) => {
+    this.bot.onText(/.bid (.+) (\d+) ([\d.]+)/, async (msg, match) => {
       const chatId = msg.chat.id
       const [, poolAddress, auctionId, ethAmount] = match!
       
       await this.handleBidCommand(chatId, msg.from!.id.toString(), poolAddress, parseInt(auctionId), ethAmount)
+    })
+
+    this.bot.on('callback_query', async (callbackQuery) => {
+      const msg = callbackQuery.message
+      const data = callbackQuery.data
+      
+      if (!msg || !data) {
+        await this.bot.answerCallbackQuery(callbackQuery.id)
+        return
+      }
+
+      const chatId = msg.chat.id
+      const telegramId = callbackQuery.from.id.toString()
+
+      await this.bot.answerCallbackQuery(callbackQuery.id)
+
+      if (data.startsWith('confirm_bid:')) {
+        const [, poolAddress, auctionIdStr, ethAmount] = data.split(':')
+        const auctionId = parseInt(auctionIdStr)
+
+        try {
+          // Edit the original message to show "Submitting..." and remove the buttons.
+          await this.bot.editMessageText('Submitting your bid...', {
+            chat_id: chatId,
+            message_id: msg.message_id,
+          })
+
+          const user = await this.getUser(telegramId)
+          if (!user?.privateKey) {
+            await this.bot.editMessageText('❌ Connect wallet first with /connect', {
+              chat_id: chatId,
+              message_id: msg.message_id,
+            })
+            return
+          }
+
+          const bidAmount = parseEther(ethAmount)
+
+          const txHash = await this.queries.placeBid(
+            user.privateKey as `0x${string}`,
+            poolAddress,
+            BigInt(auctionId),
+            bidAmount
+          )
+
+          await this.bot.editMessageText(
+`✅ **Bid Submitted!**
+
+Transaction Hash: \`${txHash}\`
+`, {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'Markdown'
+          })
+
+        } catch (error: any) {
+          console.error('Failed to place bid:', error)
+          await this.bot.editMessageText(`❌ Failed to place bid: ${error.shortMessage || error.message}`, {
+            chat_id: chatId,
+            message_id: msg.message_id
+          })
+        }
+      } else if (data === 'cancel_bid') {
+        await this.bot.editMessageText('Bid cancelled.', {
+          chat_id: chatId,
+          message_id: msg.message_id,
+        })
+      } else if (data.startsWith('quick_bid:')) {
+        const [, poolAddress, auctionIdStr, ethAmount] = data.split(':')
+        const auctionId = parseInt(auctionIdStr)
+        // It's better to remove the original message with the buttons
+        await this.bot.deleteMessage(chatId, msg.message_id)
+        await this.handleBidCommand(chatId, telegramId, poolAddress, auctionId, ethAmount)
+      } else if (data.startsWith('auction_details:')) {
+        await this.bot.sendMessage(chatId, 'Details feature coming soon!')
+      }
     })
   }
 
@@ -213,6 +289,7 @@ export class MEVAlertBot {
       
       const auction = await this.queries.getAuction(poolAddress, BigInt(auctionId))
       if (!auction || !auction.isActive) {
+        console.log(auction);
         await this.bot.sendMessage(chatId, '❌ Auction not active')
         return
       }
@@ -241,7 +318,7 @@ export class MEVAlertBot {
       
       const keyboard = {
         inline_keyboard: [
-          [{ text: '✅ Confirm Bid', callback_data: `confirm_bid_${poolAddress}_${auctionId}_${ethAmount}` }],
+          [{ text: '✅ Confirm Bid', callback_data: `confirm_bid:${poolAddress}:${auctionId}:${ethAmount}` }],
           [{ text: '❌ Cancel', callback_data: 'cancel_bid' }]
         ]
       }
