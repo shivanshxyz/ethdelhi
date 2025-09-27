@@ -72,6 +72,18 @@ contract MEVHook is BaseHook, Ownable {
     mapping(address => uint256) public mevThreshold; // pool => threshold
     uint256 public minLargeSwap = 0;                 // global demo param
 
+    // MEV tracking storage for sophisticated scoring
+    mapping(address => uint256) public lastLargeSwapTime; // pool => timestamp
+    mapping(address => uint256) public lastSwapAmount;   // pool => last amount
+    mapping(address => uint256) public swapCount24h;     // pool => count in 24h
+    mapping(address => uint256) public lastCountReset;   // pool => last reset time
+    mapping(address => uint256) public totalVolumeToday; // pool => volume in 24h
+    
+    // MEV detection thresholds (configurable)
+    uint256 public rapidSwapThreshold = 300;  // 5 minutes in seconds
+    uint256 public highVolumeMultiplier = 10; // 10x normal volume = suspicious
+    uint256 public consecutiveSwapBonus = 200; // 2x multiplier for rapid swaps
+
     // authorized off-chain oracles for EIP-712 recommendations
     mapping(address => bool) public isAuthorizedOracle; // signer => allowed
 
@@ -310,6 +322,9 @@ contract MEVHook is BaseHook, Ownable {
         address pool = msg.sender;
         require(isPool[pool], "POOL_NOT_ALLOWED");
 
+        // Update MEV tracking data
+        _updateSwapTracking(pool, amountIn);
+
         emit SwapObserved(pool, trader, amountIn, amountOut, block.timestamp);
 
         uint256 score = computeMEVScoreOnchain(pool, amountIn);
@@ -340,9 +355,7 @@ contract MEVHook is BaseHook, Ownable {
         });
     }
 
-    // -------------------------------------------------------------------------
-    // Uniswap v4 Hook Callbacks (modeled after src/Counter.sol)
-    // -------------------------------------------------------------------------
+
     function _beforeSwap(
         address sender,
         PoolKey calldata key,
@@ -391,6 +404,9 @@ contract MEVHook is BaseHook, Ownable {
             amountIn = a1 < 0 ? uint256(int256(-a1)) : 0;
             amountOut = a0 > 0 ? uint256(int256(a0)) : 0;
         }
+
+        // Update MEV tracking data with actual swap information
+        _updateSwapTracking(poolAddr, amountIn);
 
         emit SwapObserved(poolAddr, sender, amountIn, amountOut, block.timestamp);
 
@@ -599,18 +615,121 @@ contract MEVHook is BaseHook, Ownable {
     function computeMEVScoreOnchain(address pool, uint256 amountIn) public view returns (uint256) {
         if (amountIn < minLargeSwap) return 0;
         
-        // Add more sophisticated MEV indicators:
-        // - Check time since last large swap
-        // - Calculate price impact estimate  
-        // - Check for rapid consecutive swaps
-        
         uint256 baseScore = amountIn;
+        uint256 totalScore = baseScore;
         
-        // Example: Higher score for back-to-back large swaps
-        // This requires tracking lastLargeSwapTime, which is not in the current storage.
-        // For now, we'll just return the base score.
+        // 1. Rapid consecutive swap detection
+        uint256 timeSinceLastSwap = block.timestamp - lastLargeSwapTime[pool];
+        if (timeSinceLastSwap > 0 && timeSinceLastSwap <= rapidSwapThreshold) {
+            // Rapid swap detected - increase score significantly
+            totalScore = (totalScore * consecutiveSwapBonus) / 100;
+            
+            // Extra bonus if amounts are similar (potential sandwich attack)
+            uint256 lastAmount = lastSwapAmount[pool];
+            if (lastAmount > 0) {
+                uint256 ratio = amountIn > lastAmount ? (amountIn * 100) / lastAmount : (lastAmount * 100) / amountIn;
+                if (ratio <= 150) { // Within 50% of each other
+                    totalScore = (totalScore * 150) / 100; // 1.5x bonus
+                }
+            }
+        }
         
-        return baseScore;
+        // 2. High volume detection (potential MEV bot activity)
+        uint256 currentVolume = totalVolumeToday[pool];
+        uint256 avgDailyVolume = _getAverageVolume(pool);
+        if (avgDailyVolume > 0 && currentVolume > avgDailyVolume * highVolumeMultiplier) {
+            totalScore = (totalScore * 120) / 100; // 1.2x bonus for high volume
+        }
+        
+        // 3. Frequency-based scoring (many swaps in short time)
+        uint256 swapsToday = swapCount24h[pool];
+        if (swapsToday > 10) { // More than 10 swaps today
+            uint256 frequencyMultiplier = 100 + (swapsToday - 10) * 5; // +5% per extra swap
+            frequencyMultiplier = frequencyMultiplier > 200 ? 200 : frequencyMultiplier; // Cap at 2x
+            totalScore = (totalScore * frequencyMultiplier) / 100;
+        }
+        
+        // 4. Price impact estimation (larger swaps = higher potential MEV)
+        if (amountIn > minLargeSwap * 5) { // 5x the minimum threshold
+            uint256 sizeMultiplier = amountIn / (minLargeSwap * 5);
+            sizeMultiplier = sizeMultiplier > 3 ? 3 : sizeMultiplier; // Cap at 3x
+            totalScore = totalScore * (100 + sizeMultiplier * 10) / 100;
+        }
+        
+        // 5. Time-based scoring (certain times more prone to MEV)
+        uint256 hourOfDay = (block.timestamp / 3600) % 24;
+        if ((hourOfDay >= 8 && hourOfDay <= 10) || (hourOfDay >= 14 && hourOfDay <= 16)) {
+            // Peak trading hours - slightly higher MEV likelihood
+            totalScore = (totalScore * 110) / 100; // 1.1x bonus
+        }
+        
+        return totalScore;
+    }
+    
+    // Helper function to estimate average volume (simplified for demo)
+    function _getAverageVolume(address pool) internal view returns (uint256) {
+        // In a real implementation, this would track historical data
+        // For demo purposes, we'll use a simple heuristic based on recent activity
+        uint256 recentVolume = totalVolumeToday[pool];
+        if (recentVolume == 0) return minLargeSwap * 100; // Default baseline
+        
+        // Estimate based on current activity patterns
+        return recentVolume / 2; // Assume current volume is 2x normal
+    }
+    
+    // -------------------------------------------------------------------------
+    // MEV Tracking Functions
+    // -------------------------------------------------------------------------
+    
+    // Update swap tracking data (call this from beforeSwap or afterSwap hook)
+    function _updateSwapTracking(address pool, uint256 amountIn) internal {
+        // Reset daily counters if 24 hours have passed
+        if (block.timestamp - lastCountReset[pool] >= 86400) { // 24 hours
+            swapCount24h[pool] = 0;
+            totalVolumeToday[pool] = 0;
+            lastCountReset[pool] = block.timestamp;
+        }
+        
+        // Update counters
+        swapCount24h[pool]++;
+        totalVolumeToday[pool] += amountIn;
+        
+        // Update large swap tracking
+        if (amountIn >= minLargeSwap) {
+            lastLargeSwapTime[pool] = block.timestamp;
+            lastSwapAmount[pool] = amountIn;
+        }
+    }
+    
+    // Public function to manually trigger MEV score computation (for testing)
+    function getMEVScore(address pool, uint256 amountIn) external view returns (uint256) {
+        return computeMEVScoreOnchain(pool, amountIn);
+    }
+    
+    // Owner functions to adjust MEV detection parameters
+    function setMEVParameters(
+        uint256 _rapidSwapThreshold,
+        uint256 _highVolumeMultiplier,
+        uint256 _consecutiveSwapBonus
+    ) external onlyOwner {
+        rapidSwapThreshold = _rapidSwapThreshold;
+        highVolumeMultiplier = _highVolumeMultiplier;
+        consecutiveSwapBonus = _consecutiveSwapBonus;
+    }
+    
+    // Get comprehensive MEV analytics for a pool
+    function getPoolMEVAnalytics(address pool) external view returns (
+        uint256 lastSwapTime,
+        uint256 lastAmount,
+        uint256 swapsToday,
+        uint256 volumeToday,
+        uint256 currentScore
+    ) {
+        lastSwapTime = lastLargeSwapTime[pool];
+        lastAmount = lastSwapAmount[pool];
+        swapsToday = swapCount24h[pool];
+        volumeToday = totalVolumeToday[pool];
+        currentScore = lastAmount > 0 ? computeMEVScoreOnchain(pool, lastAmount) : 0;
     }
 
     // receive ether for bids
