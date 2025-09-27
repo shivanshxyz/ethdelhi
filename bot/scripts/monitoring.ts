@@ -235,8 +235,32 @@ class BlockchainMonitor {
         })
       }
     })
+
+    // Monitor Auction Settled
+    const unsubscribeSettled = publicClient.watchContractEvent({
+      address: process.env.HOOK_ADDRESS as `0x${string}`,
+      abi: HOOK_ABI, 
+      eventName: 'AuctionSettled',
+      onLogs: (logs) => {
+        logs.forEach(async (log) => {
+          if (log.args) {
+            const { pool, auctionId, winner, finalFeeBps } = log.args;
+            console.log(`🏁 Auction Settled: Pool ${pool}, ID ${auctionId}, Winner ${winner}`)
+            
+            await this.handleAuctionSettled({
+              pool: pool!,
+              auctionId: auctionId!,
+              winner: winner!,
+              finalFeeBps: finalFeeBps!,
+              blockNumber: log.blockNumber!,
+              txHash: log.transactionHash!
+            });
+          }
+        })
+      }
+    })
     
-    this.unsubscribeFunctions = [unsubscribeMEVAlerts, unsubscribeAuctions, unsubscribeBids]
+    this.unsubscribeFunctions = [unsubscribeMEVAlerts, unsubscribeAuctions, unsubscribeBids, unsubscribeSettled]
   }
   
   async handleAuctionStarted(params: {
@@ -260,6 +284,17 @@ class BlockchainMonitor {
     txHash: string | undefined
   }) {
     console.log('Handling Bid Placed:', params)
+  }
+
+  async handleAuctionSettled(params: {
+    pool: string,
+    auctionId: bigint,
+    winner: string,
+    finalFeeBps: bigint,
+    blockNumber: bigint | number | undefined,
+    txHash: string | undefined
+  }) {
+    console.log('Handling Auction Settled:', params)
   }
 
   async stopMonitoring() {

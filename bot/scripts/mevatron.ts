@@ -33,6 +33,7 @@ export class MEVAlertBot {
     this.setupDatabase()
     this.setupHandlers()
     this.monitor.handleMEVAlert = this.sendMEVAlert.bind(this)
+    this.monitor.handleAuctionSettled = this.sendWinnerNotification.bind(this)
   }
   
   private setupDatabase() {
@@ -372,6 +373,35 @@ An auction may start shortly. Use /auctions to check.
     }
   }
 
+  private async sendWinnerNotification(params: {
+    pool: string,
+    auctionId: bigint,
+    winner: string,
+    finalFeeBps: bigint,
+    txHash: string | undefined
+  }): Promise<void> {
+    console.log(`Notifying winner for auction #${params.auctionId} on pool ${params.pool}`);
+
+    const user = await this.getUserByWalletAddress(params.winner);
+
+    if (user && user.notificationSettings.winnerNotifications) {
+      try {
+        const message = `
+🎉 **Congratulations! You won!** 🎉
+
+You were the highest bidder in auction **#${params.auctionId}** on pool \`${params.pool}\`.
+
+Your bid has been accepted, and you have successfully front-run the MEV transaction, saving on fees!
+
+Transaction: \`${params.txHash}\`
+        `;
+        await this.bot.sendMessage(user.telegramId, message, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error(`Failed to send winner notification to user ${user.telegramId}`, error);
+      }
+    }
+  }
+
   async startMonitoring() {
     await this.monitor.startMonitoring()
   }
@@ -383,6 +413,23 @@ An auction may start shortly. Use /auctions to check.
   private async getUser(telegramId: string): Promise<User | null> {
     const stmt = this.db.prepare('SELECT * FROM users WHERE telegram_id = ?')
     const row = stmt.get(telegramId) as any
+    
+    if (!row) {
+      return null
+    }
+    
+    return {
+      telegramId: row.telegram_id,
+      walletAddress: row.wallet_address,
+      privateKey: row.encrypted_key,
+      watchedPools: JSON.parse(row.watched_pools),
+      notificationSettings: JSON.parse(row.settings)
+    }
+  }
+
+  private async getUserByWalletAddress(walletAddress: string): Promise<User | null> {
+    const stmt = this.db.prepare('SELECT * FROM users WHERE wallet_address = ? COLLATE NOCASE')
+    const row = stmt.get(walletAddress) as any
     
     if (!row) {
       return null
