@@ -1,167 +1,106 @@
-# Uniswap v4 Hook Template
+# Short description
+## A max 100-character or less description of your project (it should fit in a tweet!)
 
-**A template for writing Uniswap v4 Hooks 🦄**
+🚀 MEVengers: World's first social mechanism to hedge against MEVs 💰⚡
 
-### Get Started
+# Description
+## Go in as much detail as you can about what this project is. Please be as clear as possible!
 
-This template provides a starting point for writing Uniswap v4 Hooks, including a simple example and preconfigured test environment. Start by creating a new repository using the "Use this template" button at the top right of this page. Alternatively you can also click this link:
+**MEVengers** is the world's first MEV (Maximal Extractable Value) protection system accessible through Telegram, democratizing MEV protection for retail users.
 
-[![Use this Template](https://img.shields.io/badge/Use%20this%20Template-101010?style=for-the-badge&logo=github)](https://github.com/uniswapfoundation/v4-template/generate)
+## The Problem
 
-1. The example hook [Counter.sol](src/Counter.sol) demonstrates the `beforeSwap()` and `afterSwap()` hooks
-2. The test template [Counter.t.sol](test/Counter.t.sol) preconfigures the v4 pool manager, test tokens, and test liquidity.
+### Problem 1: MEV Extraction Hurts Regular Users
+- Users get worse prices due to sandwich attacks, front-running
+- No protection mechanism for retail traders
+- MEV extraction is "invisible" to most users
 
-<details>
-<summary>Updating to v4-template:latest</summary>
+### Problem 2: Static Fee Models Don't Adapt
+- Uniswap pools have fixed fees (0.05%, 0.3%, 1%)
+- Can't respond to market conditions dynamically
+- High MEV periods get same fees as low MEV periods
 
-This template is actively maintained -- you can update the v4 dependencies, scripts, and helpers:
-
-```bash
-git remote add template https://github.com/uniswapfoundation/v4-template
-git fetch template
-git merge template/main <BRANCH> --allow-unrelated-histories
-```
-
-</details>
-
-### Requirements
-
-This template is designed to work with Foundry (stable). If you are using Foundry Nightly, you may encounter compatibility issues. You can update your Foundry installation to the latest stable version by running:
-
-```
-foundryup
-```
-
-To set up the project, run the following commands in your terminal to install dependencies and run the tests:
-
-```
-forge install
-forge test
-```
-
-### Local Development
-
-Other than writing unit tests (recommended!), you can only deploy & test hooks on [anvil](https://book.getfoundry.sh/anvil/) locally. Scripts are available in the `script/` directory, which can be used to deploy hooks, create pools, provide liquidity and swap tokens. The scripts support both local `anvil` environment as well as running them directly on a production network.
-
-### Executing locally with using **Anvil**:
-
-1. Start Anvil (or fork a specific chain using anvil):
-
-```bash
-anvil
-```
-
-or
-
-```bash
-anvil --fork-url <YOUR_RPC_URL>
-```
-
-2. Execute scripts:
-
-```bash
-forge script script/00_DeployHook.s.sol \
-    --rpc-url http://localhost:8545 \
-    --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-    --broadcast
-```
-
-### Using **RPC URLs** (actual transactions):
-
-:::info
-It is best to not store your private key even in .env or enter it directly in the command line. Instead use the `--account` flag to select your private key from your keystore.
-:::
-
-### Follow these steps if you have not stored your private key in the keystore:
-
-<details>
-
-1. Add your private key to the keystore:
-
-```bash
-cast wallet import <SET_A_NAME_FOR_KEY> --interactive
-```
-
-2. You will prompted to enter your private key and set a password, fill and press enter:
-
-```
-Enter private key: <YOUR_PRIVATE_KEY>
-Enter keystore password: <SET_NEW_PASSWORD>
-```
-
-You should see this:
-
-```
-`<YOUR_WALLET_PRIVATE_KEY_NAME>` keystore was saved successfully. Address: <YOUR_WALLET_ADDRESS>
-```
-
-::: warning
-Use ```history -c``` to clear your command history.
-:::
-
-</details>
-
-1. Execute scripts:
-
-```bash
-forge script script/00_DeployHook.s.sol \
-    --rpc-url <YOUR_RPC_URL> \
-    --account <YOUR_WALLET_PRIVATE_KEY_NAME> \
-    --sender <YOUR_WALLET_ADDRESS> \
-    --broadcast
-```
-
-You will prompted to enter your wallet password, fill and press enter:
-
-```
-Enter keystore password: <YOUR_PASSWORD>
-```
-
-### Key Modifications to note:
-
-1. Update the `token0` and `token1` addresses in the `BaseScript.sol` file to match the tokens you want to use in the network of your choice for sepolia and mainnet deployments.
-2. Update the `token0Amount` and `token1Amount` in the `CreatePoolAndAddLiquidity.s.sol` file to match the amount of tokens you want to provide liquidity with.
-3. Update the `token0Amount` and `token1Amount` in the `AddLiquidity.s.sol` file to match the amount of tokens you want to provide liquidity with.
-4. Update the `amountIn` and `amountOutMin` in the `Swap.s.sol` file to match the amount of tokens you want to swap.
+### Problem 3: No Real-Time MEV Visibility
+- No alerts when users are being targeted
+- Post-hoc analysis only (Flashbots, etc.)
+- Users can't take protective action
 
 
-### Troubleshooting
+## Our Solution
+MEVengers creates a complete ecosystem where:
 
-<details>
+### 🔍 **1. Smart MEV detection**
+Our smart MEV detection system computes and onchain MEV score by analysing the following params:
+- Swap amounts from BalanceDelta
+- Time since last large swap
+- Calculate price impact estimate 
+- Check for rapid consecutive swaps
 
-#### Permission Denied
 
-When installing dependencies with `forge install`, Github may throw a `Permission Denied` error
+### 🏆 **2. Time Weighted Auctions to hedge against MEVs**
 
-Typically caused by missing Github SSH keys, and can be resolved by following the steps [here](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh)
+Our hook automatically detects MEV scenarios and starts fee auctions. Users compete to set protective fees - winner pays premium but gets 50% back, everyone else gets protection. It's like surge pricing for MEV protection, but decided by the community
 
-Or [adding the keys to your ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent#adding-your-ssh-key-to-the-ssh-agent), if you have already uploaded SSH keys
+We implement Time Weighted Auction mechanics to incentivize early bidders:
+Early bidders get 20% time bonus
+Mid bids get 10% time bonus
 
-#### Anvil fork test failures
+### 🛡️ **3. MEV Insurance**
+- Community-Funded: Automatic funding from auction proceeds
 
-Some versions of Foundry may limit contract code size to ~25kb, which could prevent local tests to fail. You can resolve this by setting the `code-size-limit` flag
+- Evidence-Based: Requires cryptographic proof of MEV loss
 
-```
-anvil --code-size-limit 40000
-```
+- Partial Coverage: 50% compensation to prevent moral hazard
 
-#### Hook deployment failures
+- Pool-Specific: Separate insurance funds per trading pool
 
-Hook deployment failures are caused by incorrect flags or incorrect salt mining
 
-1. Verify the flags are in agreement:
-   - `getHookCalls()` returns the correct flags
-   - `flags` provided to `HookMiner.find(...)`
-2. Verify salt mining is correct:
-   - In **forge test**: the _deployer_ for: `new Hook{salt: salt}(...)` and `HookMiner.find(deployer, ...)` are the same. This will be `address(this)`. If using `vm.prank`, the deployer will be the pranking address
-   - In **forge script**: the deployer must be the CREATE2 Proxy: `0x4e59b44847b379578588920cA78FbF26c0B4956C`
-     - If anvil does not have the CREATE2 deployer, your foundry may be out of date. You can update it with `foundryup`
+MEVengers transforms MEV from a zero-sum extractive force into a positive-sum community mechanism where users actively participate in protecting each other.
 
-</details>
+# How it's made
+## Tell us about how you built this project; the nitty-gritty details. What technologies did you use? How are they pieced together? If you used any partner technologies, how did it benefit your project? Did you do anything particuarly hacky that's notable and worth mentioning?
 
-### Additional Resources
+MEVengers is built as a complete end-to-end ecosystem integrating cutting-edge Web3 infrastructure with accessible Web2 UX.
 
-- [Uniswap v4 docs](https://docs.uniswap.org/contracts/v4/overview)
-- [v4-periphery](https://github.com/uniswap/v4-periphery)
-- [v4-core](https://github.com/uniswap/v4-core)
-- [v4-by-example](https://v4-by-example.org)
+## Core Architecture
+
+### 🔗 **Uniswap v4 Hook Smart Contracts (Solidity)**
+- **Custom Hook Implementation**: Built on Uniswap v4's revolutionary hook architecture
+- **MEV Detection Engine**: Real-time on-chain analysis using transaction patterns and volume thresholds  
+- **Auction Mechanism**: Time-weighted competitive bidding with automatic settlement
+- **Advanced Features**: Emergency circuit breaker, insurance fund
+- **Gas Optimization**: Efficient storage patterns and event emission for minimal transaction costs
+
+### 🤖 **Telegram Bot Integration (Node.js)**
+- **Rich Interactive UI**: Inline keyboards for one-click bidding
+- **Real-Time Updates**: Live message editing during auctions
+- **Wallet Management**: Secure encrypted private key storage per user
+- **Notification System**: Instant alerts with customizable preferences
+
+### 🛠️ **Development & Testing Infrastructure**
+- **Foundry Framework**: Comprehensive test suite with 100% core functionality coverage
+- **Local Development**: Anvil integration for instant testing and demo environments
+- **Integration Testing**: End-to-end automation testing all user workflows
+- **Demo Automation**: One-click demo environment setup with pre-configured scenarios
+
+## Technical Innovations
+
+### 🎯 **Time-Weighted Auction Mechanics**
+We implemented a novel auction system where earlier bidders receive time-based bonuses, creating incentives for rapid community response to MEV threats while maintaining fair price discovery.
+
+### 🚨 **Emergency Circuit Breaker Pattern**
+Built a comprehensive pause mechanism that can halt all operations except admin functions during security incidents, with granular permission controls that allow owners to operate even during emergency states.
+
+### 💰 **MEV Insurance Integration**
+Created a community-funded insurance system where auction proceeds automatically contribute to a victim compensation fund, turning MEV protection into a positive-sum community endeavor.
+
+### 📱 **Telegram-First DeFi UX**
+Pioneered accessible DeFi interactions through messaging interfaces, with real-time blockchain state updates delivered as interactive chat messages with proper error handling and user feedback.
+
+
+# Steps to run
+
+1. `forge build`
+2. ./scripts/prepare-demo.sh
+3. demo-scenario-*.sh to recreate MEV attacks
+4. pnpm i && pnpm run start for telegram bot
